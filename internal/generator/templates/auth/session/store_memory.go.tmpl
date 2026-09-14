@@ -1,0 +1,54 @@
+{{if and (eq .AuthType "session") (not .UseRedis) -}}
+package auth
+
+import (
+	"sync"
+	"time"
+)
+
+// MemorySessionStore keeps sessions in process memory. Fine for a
+// single instance / local dev; for anything multi-instance, enable
+// Redis when scaffolding (it becomes the session store automatically)
+// or swap this out for your own SessionStore.
+type MemorySessionStore struct {
+	mu   sync.RWMutex
+	data map[string]*Session
+}
+
+func NewMemorySessionStore() *MemorySessionStore {
+	return &MemorySessionStore{data: map[string]*Session{}}
+}
+
+func (m *MemorySessionStore) Create(userID string, ttl time.Duration) (*Session, error) {
+	id, err := newSessionID()
+	if err != nil {
+		return nil, err
+	}
+	sess := &Session{ID: id, UserID: userID, ExpiresAt: time.Now().Add(ttl)}
+	m.mu.Lock()
+	m.data[id] = sess
+	m.mu.Unlock()
+	return sess, nil
+}
+
+func (m *MemorySessionStore) Get(id string) (*Session, error) {
+	m.mu.RLock()
+	sess, ok := m.data[id]
+	m.mu.RUnlock()
+	if !ok {
+		return nil, ErrSessionNotFound
+	}
+	if time.Now().After(sess.ExpiresAt) {
+		_ = m.Delete(id)
+		return nil, ErrSessionNotFound
+	}
+	return sess, nil
+}
+
+func (m *MemorySessionStore) Delete(id string) error {
+	m.mu.Lock()
+	delete(m.data, id)
+	m.mu.Unlock()
+	return nil
+}
+{{- end}}

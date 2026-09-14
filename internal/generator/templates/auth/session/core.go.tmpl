@@ -1,0 +1,186 @@
+{{if eq .AuthType "session" -}}
+// Package auth implements cookie + server-side-session authentication.
+//
+// Session (below) is the type you'll touch most: its Data field is a
+// free-form bag, so add whatever you need (roles, tenant id, scopes...)
+// at runtime with Set/Get — no schema changes required.
+package auth
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"time"
+
+	"golang.org/x/crypto/bcrypt"
+
+	"{{.Module}}/internal/config"
+	{{- if .HasDatabase}}
+	"{{.Module}}/internal/db"
+	{{- end}}
+)
+
+const CookieName = "session_id"
+
+var (
+	ErrInvalidCreds    = errors.New("invalid email or password")
+	ErrUserExists      = errors.New("a user with that email already exists")
+	ErrSessionNotFound = errors.New("session not found or expired")
+)
+
+// Session is the extensible bit: add typed fields directly for
+// anything you always want (e.g. Role string), or just stash it in
+// Data — both are yours to shape.
+type Session struct {
+	ID        string
+	UserID    string
+	Data      map[string]any
+	ExpiresAt time.Time
+}
+
+func (s *Session) Get(key string) (any, bool) {
+	v, ok := s.Data[key]
+	return v, ok
+}
+
+func (s *Session) Set(key string, value any) {
+	if s.Data == nil {
+		s.Data = map[string]any{}
+	}
+	s.Data[key] = value
+}
+
+// SessionStore persists sessions server-side; the cookie only ever
+// carries the opaque ID. Swap NewMemorySessionStore() for
+// NewRedisSessionStore() (below, when Redis is enabled) or your own
+// implementation as needed.
+type SessionStore interface {
+	Create(userID string, ttl time.Duration) (*Session, error)
+	Get(id string) (*Session, error)
+	Delete(id string) error
+}
+
+type User struct {
+	ID           string
+	Email        string
+	PasswordHash string
+}
+
+// UserStore is deliberately tiny so it's easy to back with whatever
+// persistence you're actually using. A process-memory implementation
+// is wired up by default so the project runs immediately — replace
+// it once you have a users table{{if .HasDatabase}} in {{.Database}}{{end}}.
+type UserStore interface {
+	Create(ctx context.Context, email, passwordHash string) (User, error)
+	FindByEmail(ctx context.Context, email string) (User, error)
+	FindByID(ctx context.Context, id string) (User, error)
+}
+
+type Service struct {
+	cfg      *config.Config
+	sessions SessionStore
+	users    UserStore
+}
+
+func New(cfg *config.Config{{if .HasDatabase}}, _ *db.DB{{end}}) *Service {
+	return &Service{
+		cfg: cfg,
+		{{- if .UseRedis}}
+		sessions: NewRedisSessionStore(cfg),
+		{{- else}}
+		sessions: NewMemorySessionStore(),
+		{{- end}}
+		users: NewMemoryUserStore(),
+	}
+}
+
+func (s *Service) ttl() time.Duration {
+	return time.Duration(s.cfg.SessionTTLHour) * time.Hour
+}
+
+func (s *Service) Register(ctx context.Context, email, password string) (*Session, error) {
+	if _, err := s.users.FindByEmail(ctx, email); err == nil {
+		return nil, ErrUserExists
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+	u, err := s.users.Create(ctx, email, string(hash))
+	if err != nil {
+		return nil, err
+	}
+	return s.sessions.Create(u.ID, s.ttl())
+}
+
+func (s *Service) Login(ctx context.Context, email, password string) (*Session, error) {
+	u, err := s.users.FindByEmail(ctx, email)
+	if err != nil {
+		return nil, ErrInvalidCreds
+	}
+	if bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)) != nil {
+		return nil, ErrInvalidCreds
+	}
+	return s.sessions.Create(u.ID, s.ttl())
+}
+
+func (s *Service) Logout(sessionID string) error {
+	return s.sessions.Delete(sessionID)
+}
+
+// IssueForOAuthUser gets-or-creates a user by email (OAuth users have
+// no password) and starts a session for them. Used by the OAuth
+// callback handler in oauth.go.
+func (s *Service) IssueForOAuthUser(ctx context.Context, email string) (*Session, error) {
+	u, err := s.users.FindByEmail(ctx, email)
+	if err != nil {
+		randPass := make([]byte, 32)
+		_, _ = rand.Read(randPass)
+		hash, herr := bcrypt.GenerateFromPassword(randPass, bcrypt.DefaultCost)
+		if herr != nil {
+			return nil, herr
+		}
+		u, err = s.users.Create(ctx, email, string(hash))
+		if err != nil {
+			return nil, err
+		}
+	}
+	sess, err := s.sessions.Create(u.ID, s.ttl())
+	if err != nil {
+		return nil, err
+	}
+	sess.Set("via", "oauth")
+	return sess, nil
+}
+
+// ReadSession looks up a session by the cookie value, or
+// ErrSessionNotFound if it's missing/expired.
+func (s *Service) ReadSession(id string) (*Session, error) {
+	return s.sessions.Get(id)
+}
+
+func newSessionID() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// --- request-context plumbing (works for gin/echo/net-http, which all
+// carry a *http.Request under the hood) ---------------------------------
+
+type ctxKey int
+
+const sessionKey ctxKey = iota
+
+func WithSession(ctx context.Context, sess *Session) context.Context {
+	return context.WithValue(ctx, sessionKey, sess)
+}
+
+func SessionFromContext(ctx context.Context) (*Session, bool) {
+	s, ok := ctx.Value(sessionKey).(*Session)
+	return s, ok
+}
+{{- end}}

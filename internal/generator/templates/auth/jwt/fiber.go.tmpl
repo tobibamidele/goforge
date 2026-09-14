@@ -1,0 +1,101 @@
+{{if and (eq .AuthType "jwt") (eq .Framework "fiber") -}}
+package auth
+
+import (
+	{{- if .UseOAuth}}
+	"net/http"
+	{{- end}}
+	"strings"
+
+	"github.com/gofiber/fiber/v2"
+	{{- if .UseOAuth}}
+	"github.com/gofiber/fiber/v2/middleware/adaptor"
+	"github.com/markbates/goth/gothic"
+	{{- end}}
+)
+
+type registerReq struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+func RegisterRoutesFiber(app *fiber.App, svc *Service) {
+	{{- if .UseOAuth}}
+	InitOAuth(svc.cfg)
+	{{- end}}
+
+	g := app.Group("/auth")
+	g.Post("/register", func(c *fiber.Ctx) error {
+		var req registerReq
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		tokens, err := svc.Register(c.Context(), req.Email, req.Password)
+		if err != nil {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.Status(fiber.StatusCreated).JSON(tokens)
+	})
+	g.Post("/login", func(c *fiber.Ctx) error {
+		var req registerReq
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		tokens, err := svc.Login(c.Context(), req.Email, req.Password)
+		if err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(tokens)
+	})
+	g.Post("/refresh", func(c *fiber.Ctx) error {
+		var req struct {
+			RefreshToken string `json:"refresh_token"`
+		}
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		tokens, err := svc.Refresh(req.RefreshToken)
+		if err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(tokens)
+	})
+	{{- if .UseOAuth}}
+	g.Get("/:provider", func(c *fiber.Ctx) error {
+		provider := c.Params("provider")
+		return adaptor.HTTPHandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gothic.BeginAuthHandler(w, withProvider(r, provider))
+		})(c)
+	})
+	g.Get("/:provider/callback", func(c *fiber.Ctx) error {
+		provider := c.Params("provider")
+		return adaptor.HTTPHandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handleOAuthCallback(w, withProvider(r, provider), svc)
+		})(c)
+	})
+	{{- end}}
+
+	app.Get("/me", RequireAuth(svc), func(c *fiber.Ctx) error {
+		claims := c.Locals("claims").(*Claims)
+		return c.JSON(fiber.Map{"user_id": claims.UserID(), "extra": claims.Extra})
+	})
+}
+
+// RequireAuth reads "Authorization: Bearer <token>", validates it, and
+// stashes the parsed Claims in c.Locals("claims").
+func RequireAuth(svc *Service) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		header := c.Get("Authorization")
+		token, ok := strings.CutPrefix(header, "Bearer ")
+		if !ok || token == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "missing bearer token"})
+		}
+		claims, err := svc.ParseAccessToken(token)
+		if err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+		}
+		c.Locals("claims", claims)
+		return c.Next()
+	}
+}
+{{- end}}

@@ -1,0 +1,218 @@
+{{if eq .AuthType "jwt" -}}
+// Package auth implements JWT-based authentication: password hashing,
+// access/refresh token issuing + parsing, and a pluggable user store.
+//
+// Claims (below) is the one type you'll touch most: it starts minimal
+// on purpose. Add fields directly to the struct for anything you want
+// strongly typed (role, tenant id...), or stash ad-hoc values in Extra
+// — both flow through Issue/Parse automatically, no other code to edit.
+package auth
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
+
+	"{{.Module}}/internal/config"
+	{{- if .HasDatabase}}
+	"{{.Module}}/internal/db"
+	{{- end}}
+)
+
+var (
+	ErrInvalidToken = errors.New("invalid or expired token")
+	ErrInvalidCreds = errors.New("invalid email or password")
+	ErrUserExists   = errors.New("a user with that email already exists")
+)
+
+// Claims is embedded into every access token. Add fields here for
+// anything you want strongly typed; use Extra for everything else.
+type Claims struct {
+	jwt.RegisteredClaims
+	Extra map[string]any `json:"extra,omitempty"`
+}
+
+func (c Claims) UserID() string { return c.Subject }
+
+func (c Claims) Get(key string) (any, bool) {
+	v, ok := c.Extra[key]
+	return v, ok
+}
+
+func (c *Claims) Set(key string, value any) {
+	if c.Extra == nil {
+		c.Extra = map[string]any{}
+	}
+	c.Extra[key] = value
+}
+
+type TokenPair struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+}
+
+type User struct {
+	ID           string
+	Email        string
+	PasswordHash string
+}
+
+// UserStore is deliberately tiny so it's easy to back with whatever
+// persistence you're actually using. A process-memory implementation
+// is wired up by default below so the project runs immediately —
+// swap NewMemoryUserStore() out for a real one backed by {{if .HasDatabase}}`{{.Database}}`{{else}}your database{{end}}
+// once you have a users table.
+type UserStore interface {
+	Create(ctx context.Context, email, passwordHash string) (User, error)
+	FindByEmail(ctx context.Context, email string) (User, error)
+	FindByID(ctx context.Context, id string) (User, error)
+}
+
+type Service struct {
+	cfg   *config.Config
+	users UserStore
+}
+
+// New builds the auth service. The default user store is in-memory —
+// see UserStore above for why, and store_memory.go for the
+// implementation to replace.
+func New(cfg *config.Config{{if .HasDatabase}}, _ *db.DB{{end}}) *Service {
+	return &Service{cfg: cfg, users: NewMemoryUserStore()}
+}
+
+// Register hashes the password, stores the user, and returns a fresh
+// token pair so the caller is immediately logged in.
+func (s *Service) Register(ctx context.Context, email, password string) (TokenPair, error) {
+	if _, err := s.users.FindByEmail(ctx, email); err == nil {
+		return TokenPair{}, ErrUserExists
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return TokenPair{}, err
+	}
+	u, err := s.users.Create(ctx, email, string(hash))
+	if err != nil {
+		return TokenPair{}, err
+	}
+	return s.IssueTokenPair(u.ID, nil)
+}
+
+func (s *Service) Login(ctx context.Context, email, password string) (TokenPair, error) {
+	u, err := s.users.FindByEmail(ctx, email)
+	if err != nil {
+		return TokenPair{}, ErrInvalidCreds
+	}
+	if bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)) != nil {
+		return TokenPair{}, ErrInvalidCreds
+	}
+	return s.IssueTokenPair(u.ID, nil)
+}
+
+// IssueForOAuthUser gets-or-creates a user by email (OAuth users have
+// no password) and issues a token pair for them. Used by the OAuth
+// callback handlers in oauth.go.
+func (s *Service) IssueForOAuthUser(ctx context.Context, email string) (TokenPair, error) {
+	u, err := s.users.FindByEmail(ctx, email)
+	if err != nil {
+		randPass := make([]byte, 32)
+		_, _ = rand.Read(randPass)
+		hash, herr := bcrypt.GenerateFromPassword(randPass, bcrypt.DefaultCost)
+		if herr != nil {
+			return TokenPair{}, herr
+		}
+		u, err = s.users.Create(ctx, email, string(hash))
+		if err != nil {
+			return TokenPair{}, err
+		}
+	}
+	return s.IssueTokenPair(u.ID, map[string]any{"via": "oauth"})
+}
+
+// IssueTokenPair signs a fresh access+refresh pair for subject
+// (typically a user id). extra is stamped onto the access token's
+// Claims.Extra — use it for roles, scopes, tenant id, anything.
+func (s *Service) IssueTokenPair(subject string, extra map[string]any) (TokenPair, error) {
+	now := time.Now()
+
+	access := Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   subject,
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(time.Duration(s.cfg.JWTAccessTTLMin) * time.Minute)),
+			ID:        newJTI(),
+		},
+		Extra: extra,
+	}
+	accessTok, err := jwt.NewWithClaims(jwt.SigningMethodHS256, access).SignedString([]byte(s.cfg.JWTAccessSecret))
+	if err != nil {
+		return TokenPair{}, err
+	}
+
+	refresh := jwt.RegisteredClaims{
+		Subject:   subject,
+		IssuedAt:  jwt.NewNumericDate(now),
+		ExpiresAt: jwt.NewNumericDate(now.Add(time.Duration(s.cfg.JWTRefreshTTLHour) * time.Hour)),
+		ID:        newJTI(),
+	}
+	refreshTok, err := jwt.NewWithClaims(jwt.SigningMethodHS256, refresh).SignedString([]byte(s.cfg.JWTRefreshSecret))
+	if err != nil {
+		return TokenPair{}, err
+	}
+
+	return TokenPair{AccessToken: accessTok, RefreshToken: refreshTok}, nil
+}
+
+// Refresh validates a refresh token and issues a brand new pair
+// (rotation — the old refresh token isn't reusable once you plug in
+// a real denylist/store, which is left as a hook: see the TODO).
+func (s *Service) Refresh(refreshToken string) (TokenPair, error) {
+	claims := &jwt.RegisteredClaims{}
+	tok, err := jwt.ParseWithClaims(refreshToken, claims, func(t *jwt.Token) (interface{}, error) {
+		return []byte(s.cfg.JWTRefreshSecret), nil
+	})
+	if err != nil || !tok.Valid {
+		return TokenPair{}, ErrInvalidToken
+	}
+	// TODO: check a denylist/store here if you want single-use refresh
+	// tokens or the ability to revoke a session early.
+	return s.IssueTokenPair(claims.Subject, nil)
+}
+
+func (s *Service) ParseAccessToken(raw string) (*Claims, error) {
+	claims := &Claims{}
+	tok, err := jwt.ParseWithClaims(raw, claims, func(t *jwt.Token) (interface{}, error) {
+		return []byte(s.cfg.JWTAccessSecret), nil
+	})
+	if err != nil || !tok.Valid {
+		return nil, ErrInvalidToken
+	}
+	return claims, nil
+}
+
+func newJTI() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// --- request-context plumbing (works for gin/echo/net-http, which all
+// carry a *http.Request under the hood) ---------------------------------
+
+type ctxKey int
+
+const claimsKey ctxKey = iota
+
+func WithClaims(ctx context.Context, c *Claims) context.Context {
+	return context.WithValue(ctx, claimsKey, c)
+}
+
+func ClaimsFromContext(ctx context.Context) (*Claims, bool) {
+	c, ok := ctx.Value(claimsKey).(*Claims)
+	return c, ok
+}
+{{- end}}

@@ -1,0 +1,98 @@
+{{if and (eq .AuthType "session") (eq .Framework "gin") -}}
+package auth
+
+import (
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	{{- if .UseOAuth}}
+	"github.com/markbates/goth/gothic"
+	{{- end}}
+)
+
+type registerReq struct {
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required,min=8"`
+}
+
+func RegisterRoutesGin(r *gin.Engine, svc *Service) {
+	{{- if .UseOAuth}}
+	InitOAuth(svc.cfg)
+	{{- end}}
+
+	setCookie := func(c *gin.Context, sess *Session) {
+		c.SetSameSite(http.SameSiteLaxMode)
+		c.SetCookie(CookieName, sess.ID, int(time.Until(sess.ExpiresAt).Seconds()), "/", "", false, true)
+	}
+
+	g := r.Group("/auth")
+	g.POST("/register", func(c *gin.Context) {
+		var req registerReq
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		sess, err := svc.Register(c.Request.Context(), req.Email, req.Password)
+		if err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
+		setCookie(c, sess)
+		c.JSON(http.StatusCreated, gin.H{"status": "ok"})
+	})
+	g.POST("/login", func(c *gin.Context) {
+		var req registerReq
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		sess, err := svc.Login(c.Request.Context(), req.Email, req.Password)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			return
+		}
+		setCookie(c, sess)
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+	g.POST("/logout", func(c *gin.Context) {
+		if id, err := c.Cookie(CookieName); err == nil {
+			_ = svc.Logout(id)
+		}
+		c.SetCookie(CookieName, "", -1, "/", "", false, true)
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+	{{- if .UseOAuth}}
+	g.GET("/:provider", func(c *gin.Context) {
+		gothic.BeginAuthHandler(c.Writer, withProvider(c.Request, c.Param("provider")))
+	})
+	g.GET("/:provider/callback", func(c *gin.Context) {
+		handleOAuthCallback(c.Writer, withProvider(c.Request, c.Param("provider")), svc)
+	})
+	{{- end}}
+
+	r.GET("/me", RequireAuth(svc), func(c *gin.Context) {
+		sess, _ := SessionFromContext(c.Request.Context())
+		c.JSON(http.StatusOK, gin.H{"user_id": sess.UserID, "data": sess.Data})
+	})
+}
+
+// RequireAuth reads the session cookie, validates it, and stashes the
+// Session on the request context (read back with SessionFromContext).
+func RequireAuth(svc *Service) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id, err := c.Cookie(CookieName)
+		if err != nil || id == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing session cookie"})
+			return
+		}
+		sess, err := svc.ReadSession(id)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			return
+		}
+		c.Request = c.Request.WithContext(WithSession(c.Request.Context(), sess))
+		c.Next()
+	}
+}
+{{- end}}

@@ -1,0 +1,58 @@
+{{if and (eq .AuthType "session") .UseRedis -}}
+package auth
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+
+	"{{.Module}}/internal/cache"
+	"{{.Module}}/internal/config"
+)
+
+// RedisSessionStore backs sessions with redis so they survive
+// restarts and work across multiple instances of the app. It opens
+// its own connection using the same settings as internal/cache —
+// swap in the shared client yourself if you'd rather not have two.
+type RedisSessionStore struct {
+	rdb cache.Client
+}
+
+func NewRedisSessionStore(cfg *config.Config) *RedisSessionStore {
+	return &RedisSessionStore{rdb: cache.Connect(cfg)}
+}
+
+func (r *RedisSessionStore) key(id string) string { return "session:" + id }
+
+func (r *RedisSessionStore) Create(userID string, ttl time.Duration) (*Session, error) {
+	id, err := newSessionID()
+	if err != nil {
+		return nil, err
+	}
+	sess := &Session{ID: id, UserID: userID, ExpiresAt: time.Now().Add(ttl)}
+	b, err := json.Marshal(sess)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.rdb.Set(context.Background(), r.key(id), b, ttl).Err(); err != nil {
+		return nil, err
+	}
+	return sess, nil
+}
+
+func (r *RedisSessionStore) Get(id string) (*Session, error) {
+	b, err := r.rdb.Get(context.Background(), r.key(id)).Bytes()
+	if err != nil {
+		return nil, ErrSessionNotFound
+	}
+	var sess Session
+	if err := json.Unmarshal(b, &sess); err != nil {
+		return nil, err
+	}
+	return &sess, nil
+}
+
+func (r *RedisSessionStore) Delete(id string) error {
+	return r.rdb.Del(context.Background(), r.key(id)).Err()
+}
+{{- end}}

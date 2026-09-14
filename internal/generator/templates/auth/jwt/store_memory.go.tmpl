@@ -1,0 +1,59 @@
+{{if eq .AuthType "jwt" -}}
+package auth
+
+import (
+	"context"
+	"errors"
+	"sync"
+
+	"github.com/google/uuid"
+)
+
+var ErrUserNotFound = errors.New("user not found")
+
+// MemoryUserStore is a process-memory UserStore so the scaffolded
+// project runs end-to-end before you've wired up real persistence.
+// Replace auth.New's store with your own implementation once you have
+// a users table{{if .HasDatabase}} in {{.Database}}{{end}}.
+type MemoryUserStore struct {
+	mu    sync.RWMutex
+	byID  map[string]User
+	email map[string]string // email -> id
+}
+
+func NewMemoryUserStore() *MemoryUserStore {
+	return &MemoryUserStore{byID: map[string]User{}, email: map[string]string{}}
+}
+
+func (m *MemoryUserStore) Create(_ context.Context, email, passwordHash string) (User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.email[email]; ok {
+		return User{}, ErrUserExists
+	}
+	u := User{ID: uuid.NewString(), Email: email, PasswordHash: passwordHash}
+	m.byID[u.ID] = u
+	m.email[email] = u.ID
+	return u, nil
+}
+
+func (m *MemoryUserStore) FindByEmail(_ context.Context, email string) (User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	id, ok := m.email[email]
+	if !ok {
+		return User{}, ErrUserNotFound
+	}
+	return m.byID[id], nil
+}
+
+func (m *MemoryUserStore) FindByID(_ context.Context, id string) (User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	u, ok := m.byID[id]
+	if !ok {
+		return User{}, ErrUserNotFound
+	}
+	return u, nil
+}
+{{- end}}

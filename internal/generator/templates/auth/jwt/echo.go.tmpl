@@ -1,0 +1,96 @@
+{{if and (eq .AuthType "jwt") (eq .Framework "echo") -}}
+package auth
+
+import (
+	"net/http"
+	"strings"
+
+	"github.com/labstack/echo/v4"
+	{{- if .UseOAuth}}
+	"github.com/markbates/goth/gothic"
+	{{- end}}
+)
+
+type registerReq struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+func RegisterRoutesEcho(e *echo.Echo, svc *Service) {
+	{{- if .UseOAuth}}
+	InitOAuth(svc.cfg)
+	{{- end}}
+
+	g := e.Group("/auth")
+	g.POST("/register", func(c echo.Context) error {
+		var req registerReq
+		if err := c.Bind(&req); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		tokens, err := svc.Register(c.Request().Context(), req.Email, req.Password)
+		if err != nil {
+			return c.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
+		}
+		return c.JSON(http.StatusCreated, tokens)
+	})
+	g.POST("/login", func(c echo.Context) error {
+		var req registerReq
+		if err := c.Bind(&req); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		tokens, err := svc.Login(c.Request().Context(), req.Email, req.Password)
+		if err != nil {
+			return c.JSON(http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		}
+		return c.JSON(http.StatusOK, tokens)
+	})
+	g.POST("/refresh", func(c echo.Context) error {
+		var req struct {
+			RefreshToken string `json:"refresh_token"`
+		}
+		if err := c.Bind(&req); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		tokens, err := svc.Refresh(req.RefreshToken)
+		if err != nil {
+			return c.JSON(http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		}
+		return c.JSON(http.StatusOK, tokens)
+	})
+	{{- if .UseOAuth}}
+	g.GET("/:provider", func(c echo.Context) error {
+		gothic.BeginAuthHandler(c.Response().Writer, withProvider(c.Request(), c.Param("provider")))
+		return nil
+	})
+	g.GET("/:provider/callback", func(c echo.Context) error {
+		handleOAuthCallback(c.Response().Writer, withProvider(c.Request(), c.Param("provider")), svc)
+		return nil
+	})
+	{{- end}}
+
+	e.GET("/me", func(c echo.Context) error {
+		claims, _ := ClaimsFromContext(c.Request().Context())
+		return c.JSON(http.StatusOK, map[string]any{"user_id": claims.UserID(), "extra": claims.Extra})
+	}, RequireAuth(svc))
+}
+
+// RequireAuth reads "Authorization: Bearer <token>", validates it, and
+// stashes the parsed Claims on the request context.
+func RequireAuth(svc *Service) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			header := c.Request().Header.Get("Authorization")
+			token, ok := strings.CutPrefix(header, "Bearer ")
+			if !ok || token == "" {
+				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "missing bearer token"})
+			}
+			claims, err := svc.ParseAccessToken(token)
+			if err != nil {
+				return c.JSON(http.StatusUnauthorized, map[string]string{"error": err.Error()})
+			}
+			c.SetRequest(c.Request().WithContext(WithClaims(c.Request().Context(), claims)))
+			return next(c)
+		}
+	}
+}
+{{- end}}

@@ -1,0 +1,104 @@
+{{if .UseOAuth -}}
+package auth
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"github.com/gorilla/sessions"
+	"github.com/markbates/goth"
+	"github.com/markbates/goth/gothic"
+	{{- range .OAuthProviders}}
+	{{- if eq . "google"}}
+	"github.com/markbates/goth/providers/google"
+	{{- end}}
+	{{- if eq . "github"}}
+	"github.com/markbates/goth/providers/github"
+	{{- end}}
+	{{- if eq . "gitlab"}}
+	"github.com/markbates/goth/providers/gitlab"
+	{{- end}}
+	{{- if eq . "discord"}}
+	"github.com/markbates/goth/providers/discord"
+	{{- end}}
+	{{- end}}
+
+	"{{.Module}}/internal/config"
+)
+
+// InitOAuth wires up every configured social provider. It's called
+// once by RegisterRoutes* before routes are attached. To add another
+// provider: import it, add a case here, add its *_CLIENT_ID /
+// *_CLIENT_SECRET to config.go and .env.example.
+//
+// goth's gothic helper needs its own small cookie store purely for
+// OAuth state/CSRF protection — separate from this app's own
+// {{.AuthType}} auth, and nothing to worry about beyond the secret below.
+func InitOAuth(cfg *config.Config) {
+	gothic.Store = sessions.NewCookieStore([]byte({{if eq .AuthType "jwt"}}cfg.JWTAccessSecret{{else}}cfg.SessionSecret{{end}}))
+
+	goth.UseProviders(
+		{{- range .OAuthProviders}}
+		{{- if eq . "google"}}
+		google.New(cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.OAuthBaseURL+"/auth/google/callback", "email", "profile"),
+		{{- end}}
+		{{- if eq . "github"}}
+		github.New(cfg.GithubClientID, cfg.GithubClientSecret, cfg.OAuthBaseURL+"/auth/github/callback"),
+		{{- end}}
+		{{- if eq . "gitlab"}}
+		gitlab.New(cfg.GitlabClientID, cfg.GitlabClientSecret, cfg.OAuthBaseURL+"/auth/gitlab/callback"),
+		{{- end}}
+		{{- if eq . "discord"}}
+		discord.New(cfg.DiscordClientID, cfg.DiscordClientSecret, cfg.OAuthBaseURL+"/auth/discord/callback", discord.ScopeIdentify, discord.ScopeEmail),
+		{{- end}}
+		{{- end}}
+	)
+}
+
+// withProvider stamps ?provider=<name> onto the request so gothic's
+// default GetProviderName lookup finds it, regardless of whether your
+// framework's router extracted the name from a path param instead of
+// the query string.
+func withProvider(r *http.Request, provider string) *http.Request {
+	q := r.URL.Query()
+	q.Set("provider", provider)
+	r2 := r.Clone(r.Context())
+	r2.URL.RawQuery = q.Encode()
+	return r2
+}
+
+// handleOAuthCallback completes the OAuth dance and logs the user in
+// the same way as everything else in this app: {{if eq .AuthType "jwt"}}by returning a token pair{{else}}by starting a session cookie{{end}}.
+func handleOAuthCallback(w http.ResponseWriter, r *http.Request, svc *Service) {
+	gothUser, err := gothic.CompleteUserAuth(w, r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+
+	{{if eq .AuthType "jwt" -}}
+	tokens, err := svc.IssueForOAuthUser(r.Context(), gothUser.Email)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(tokens)
+	{{- else -}}
+	sess, err := svc.IssueForOAuthUser(r.Context(), gothUser.Email)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     CookieName,
+		Value:    sess.ID,
+		Path:     "/",
+		HttpOnly: true,
+		Expires:  sess.ExpiresAt,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	{{- end}}
+}
+{{- end}}
