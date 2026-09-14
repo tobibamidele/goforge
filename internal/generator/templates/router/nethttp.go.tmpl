@@ -1,0 +1,72 @@
+{{if eq .Framework "nethttp" -}}
+package router
+
+import (
+	"encoding/json"
+	"log"
+	"net/http"
+	"time"
+
+	"{{.Module}}/internal/config"
+	{{- if .HasDatabase}}
+	"{{.Module}}/internal/db"
+	{{- end}}
+	{{- if .UseRedis}}
+	"{{.Module}}/internal/cache"
+	{{- end}}
+	{{- if .UseAuth}}
+	"{{.Module}}/internal/auth"
+	{{- end}}
+)
+
+// Handler wraps the stdlib ServeMux; kept as its own type so we can
+// attach middleware without pulling in a router library.
+type Handler = http.Handler
+
+type Deps struct {
+	Config *config.Config
+	{{- if .HasDatabase}}
+	DB *db.DB
+	{{- end}}
+	{{- if .UseRedis}}
+	Redis *cache.Client
+	{{- end}}
+	{{- if .UseAuth}}
+	Auth *auth.Service
+	{{- end}}
+}
+
+func New(d Deps) Handler {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	{{- if .UseAuth}}
+
+	auth.RegisterRoutesNetHTTP(mux, d.Auth)
+	{{- end}}
+
+	return withLogging(mux)
+}
+
+func withLogging(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		next.ServeHTTP(w, r)
+		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start))
+	})
+}
+
+func Run(h Handler, addr string) error {
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      h,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
+	return srv.ListenAndServe()
+}
+{{- end}}

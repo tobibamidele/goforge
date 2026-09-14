@@ -1,0 +1,64 @@
+{{if eq .Framework "gin" -}}
+package router
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+
+	"{{.Module}}/internal/config"
+	{{- if .HasDatabase}}
+	"{{.Module}}/internal/db"
+	{{- end}}
+	{{- if .UseRedis}}
+	"{{.Module}}/internal/cache"
+	{{- end}}
+	{{- if .UseAuth}}
+	"{{.Module}}/internal/auth"
+	{{- end}}
+)
+
+// Handler is whatever the underlying framework's top-level router type
+// is. Kept as an alias so cmd/server/main.go never has to import gin
+// directly.
+type Handler = *gin.Engine
+
+// Deps bundles everything a route might need. Add fields here as the
+// app grows; every field is optional depending on what was scaffolded.
+type Deps struct {
+	Config *config.Config
+	{{- if .HasDatabase}}
+	DB *db.DB
+	{{- end}}
+	{{- if .UseRedis}}
+	Redis *cache.Client
+	{{- end}}
+	{{- if .UseAuth}}
+	Auth *auth.Service
+	{{- end}}
+}
+
+func New(d Deps) Handler {
+	if d.Config.Env == "production" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	r := gin.New()
+	r.Use(gin.Logger(), gin.Recovery())
+
+	r.GET("/healthz", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
+	{{- if .UseAuth}}
+
+	auth.RegisterRoutesGin(r, d.Auth)
+	{{- end}}
+
+	return r
+}
+
+func Run(h Handler, addr string) error {
+	return h.Run(addr)
+}
+{{- end}}
