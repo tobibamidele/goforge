@@ -1,0 +1,26 @@
+package db
+
+import (
+	"database/sql"
+
+	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/pgdialect"
+	"github.com/uptrace/bun/driver/pgdriver"
+
+	"{{.Module}}/internal/config"
+)
+
+type DB struct {
+	*bun.DB
+}
+
+func Connect(cfg *config.Config) (*DB, error) {
+	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(cfg.DatabaseURL)))
+	bdb := bun.NewDB(sqldb, pgdialect.New())
+	if err := bdb.Ping(); err != nil {
+		return nil, err
+	}
+	return &DB{bdb}, nil
+}
+
+func Close(d *DB) { _ = d.DB.Close() }

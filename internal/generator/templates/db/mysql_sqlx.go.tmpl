@@ -1,0 +1,22 @@
+package db
+
+import (
+	_ "github.com/go-sql-driver/mysql"
+	"github.com/jmoiron/sqlx"
+
+	"{{.Module}}/internal/config"
+)
+
+type DB struct {
+	*sqlx.DB
+}
+
+func Connect(cfg *config.Config) (*DB, error) {
+	sdb, err := sqlx.Connect("mysql", cfg.DatabaseURL)
+	if err != nil {
+		return nil, err
+	}
+	return &DB{sdb}, nil
+}
+
+func Close(d *DB) { _ = d.DB.Close() }

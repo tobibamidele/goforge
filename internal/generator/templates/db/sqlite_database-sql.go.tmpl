@@ -1,0 +1,28 @@
+package db
+
+import (
+	"database/sql"
+	"strings"
+
+	_ "github.com/mattn/go-sqlite3"
+
+	"{{.Module}}/internal/config"
+)
+
+type DB struct {
+	*sql.DB
+}
+
+func Connect(cfg *config.Config) (*DB, error) {
+	dsn := strings.TrimPrefix(cfg.DatabaseURL, "file:")
+	sqldb, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return nil, err
+	}
+	if err := sqldb.Ping(); err != nil {
+		return nil, err
+	}
+	return &DB{sqldb}, nil
+}
+
+func Close(d *DB) { _ = d.DB.Close() }

@@ -1,0 +1,26 @@
+package db
+
+import (
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+
+	"{{.Module}}/internal/config"
+)
+
+type DB struct {
+	*gorm.DB
+}
+
+func Connect(cfg *config.Config) (*DB, error) {
+	gdb, err := gorm.Open(postgres.Open(cfg.DatabaseURL), &gorm.Config{})
+	if err != nil {
+		return nil, err
+	}
+	return &DB{gdb}, nil
+}
+
+func Close(d *DB) {
+	if sqlDB, err := d.DB.DB(); err == nil {
+		_ = sqlDB.Close()
+	}
+}

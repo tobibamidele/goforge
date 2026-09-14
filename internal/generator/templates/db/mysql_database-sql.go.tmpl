@@ -1,0 +1,26 @@
+package db
+
+import (
+	"database/sql"
+
+	_ "github.com/go-sql-driver/mysql"
+
+	"{{.Module}}/internal/config"
+)
+
+type DB struct {
+	*sql.DB
+}
+
+func Connect(cfg *config.Config) (*DB, error) {
+	sqldb, err := sql.Open("mysql", cfg.DatabaseURL)
+	if err != nil {
+		return nil, err
+	}
+	if err := sqldb.Ping(); err != nil {
+		return nil, err
+	}
+	return &DB{sqldb}, nil
+}
+
+func Close(d *DB) { _ = d.DB.Close() }

@@ -1,0 +1,29 @@
+package db
+
+import (
+	"database/sql"
+
+	_ "github.com/go-sql-driver/mysql"
+	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/mysqldialect"
+
+	"{{.Module}}/internal/config"
+)
+
+type DB struct {
+	*bun.DB
+}
+
+func Connect(cfg *config.Config) (*DB, error) {
+	sqldb, err := sql.Open("mysql", cfg.DatabaseURL)
+	if err != nil {
+		return nil, err
+	}
+	bdb := bun.NewDB(sqldb, mysqldialect.New())
+	if err := bdb.Ping(); err != nil {
+		return nil, err
+	}
+	return &DB{bdb}, nil
+}
+
+func Close(d *DB) { _ = d.DB.Close() }
