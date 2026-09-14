@@ -1,0 +1,51 @@
+name: build
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Build, vet, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+
+  release:
+    name: Release binaries
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [linux, darwin, windows]
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build and package
+        shell: bash
+        run: |
+          ext=""
+          if [ "${{ matrix.os }}" = "windows" ]; then ext=".exe"; fi
+          name="goforge-${{ matrix.os }}-${{ matrix.arch }}"
+          go build -trimpath -ldflags "-s -w" -o "dist/$name$ext" .
+          (cd dist && tar -czf "$name.tar.gz" "$name$ext")
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
