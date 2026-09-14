@@ -1,0 +1,152 @@
+package config
+
+import (
+{{- if eq .EnvLoader "viper"}}
+	"strings"
+
+	"github.com/spf13/viper"
+{{- else}}
+	"os"
+	"strconv"
+{{- end}}
+)
+
+// Config holds every runtime setting the app needs, loaded once at
+// startup. Add fields here as the project grows.
+type Config struct {
+	Env  string
+	Port string
+
+	{{- if .HasDatabase}}
+	DatabaseURL string
+	{{- end}}
+	{{- if .UseRedis}}
+	RedisAddr     string
+	RedisPassword string
+	RedisDB       int
+	{{- end}}
+	{{- if .UseAuth}}
+	{{- if eq .AuthType "jwt"}}
+	JWTAccessSecret   string
+	JWTRefreshSecret  string
+	JWTAccessTTLMin   int
+	JWTRefreshTTLHour int
+	{{- end}}
+	{{- if eq .AuthType "session"}}
+	SessionSecret  string
+	SessionTTLHour int
+	{{- end}}
+	{{- end}}
+	{{- if .UseOAuth}}
+	OAuthBaseURL string
+	{{- range .OAuthProviders}}
+	{{title .}}ClientID     string
+	{{title .}}ClientSecret string
+	{{- end}}
+	{{- end}}
+}
+
+{{if eq .EnvLoader "viper" -}}
+// Load reads configuration from the environment (and a local .env file,
+// if present) using viper.
+func Load() *Config {
+	v := viper.New()
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+	v.SetConfigFile(".env")
+	v.SetConfigType("env")
+	_ = v.ReadInConfig() // ok if there's no .env file, e.g. in prod
+
+	v.SetDefault("PORT", "8080")
+	v.SetDefault("ENV", "development")
+
+	cfg := &Config{
+		Env:  v.GetString("ENV"),
+		Port: v.GetString("PORT"),
+		{{- if .HasDatabase}}
+		DatabaseURL: v.GetString("DATABASE_URL"),
+		{{- end}}
+		{{- if .UseRedis}}
+		RedisAddr:     v.GetString("REDIS_ADDR"),
+		RedisPassword: v.GetString("REDIS_PASSWORD"),
+		RedisDB:       v.GetInt("REDIS_DB"),
+		{{- end}}
+		{{- if .UseAuth}}
+		{{- if eq .AuthType "jwt"}}
+		JWTAccessSecret:   v.GetString("JWT_ACCESS_SECRET"),
+		JWTRefreshSecret:  v.GetString("JWT_REFRESH_SECRET"),
+		JWTAccessTTLMin:   v.GetInt("JWT_ACCESS_TTL_MINUTES"),
+		JWTRefreshTTLHour: v.GetInt("JWT_REFRESH_TTL_HOURS"),
+		{{- end}}
+		{{- if eq .AuthType "session"}}
+		SessionSecret:  v.GetString("SESSION_SECRET"),
+		SessionTTLHour: v.GetInt("SESSION_TTL_HOURS"),
+		{{- end}}
+		{{- end}}
+		{{- if .UseOAuth}}
+		OAuthBaseURL: v.GetString("OAUTH_BASE_URL"),
+		{{- range .OAuthProviders}}
+		{{title .}}ClientID:     v.GetString("{{upper .}}_CLIENT_ID"),
+		{{title .}}ClientSecret: v.GetString("{{upper .}}_CLIENT_SECRET"),
+		{{- end}}
+		{{- end}}
+	}
+	return cfg
+}
+{{- else -}}
+// Load reads configuration straight from the environment. Call
+// godotenv.Load() in main() before this if you want .env support.
+func Load() *Config {
+	cfg := &Config{
+		Env:  getEnv("ENV", "development"),
+		Port: getEnv("PORT", "8080"),
+		{{- if .HasDatabase}}
+		DatabaseURL: getEnv("DATABASE_URL", ""),
+		{{- end}}
+		{{- if .UseRedis}}
+		RedisAddr:     getEnv("REDIS_ADDR", "localhost:6379"),
+		RedisPassword: getEnv("REDIS_PASSWORD", ""),
+		RedisDB:       getEnvInt("REDIS_DB", 0),
+		{{- end}}
+		{{- if .UseAuth}}
+		{{- if eq .AuthType "jwt"}}
+		JWTAccessSecret:   getEnv("JWT_ACCESS_SECRET", ""),
+		JWTRefreshSecret:  getEnv("JWT_REFRESH_SECRET", ""),
+		JWTAccessTTLMin:   getEnvInt("JWT_ACCESS_TTL_MINUTES", 15),
+		JWTRefreshTTLHour: getEnvInt("JWT_REFRESH_TTL_HOURS", 168),
+		{{- end}}
+		{{- if eq .AuthType "session"}}
+		SessionSecret:  getEnv("SESSION_SECRET", ""),
+		SessionTTLHour: getEnvInt("SESSION_TTL_HOURS", 168),
+		{{- end}}
+		{{- end}}
+		{{- if .UseOAuth}}
+		OAuthBaseURL: getEnv("OAUTH_BASE_URL", "http://localhost:8080"),
+		{{- range .OAuthProviders}}
+		{{title .}}ClientID:     getEnv("{{upper .}}_CLIENT_ID", ""),
+		{{title .}}ClientSecret: getEnv("{{upper .}}_CLIENT_SECRET", ""),
+		{{- end}}
+		{{- end}}
+	}
+	return cfg
+}
+
+func getEnv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return n
+}
+{{- end}}

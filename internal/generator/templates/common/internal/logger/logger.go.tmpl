@@ -1,0 +1,47 @@
+// Package logger sets up the app's single logger instance so the rest
+// of the code depends on this package, not on a specific logging
+// library directly.
+package logger
+
+{{if eq .Logger "zerolog" -}}
+import (
+	"os"
+
+	"github.com/rs/zerolog"
+)
+
+func New(env string) zerolog.Logger {
+	level := zerolog.InfoLevel
+	if env != "production" {
+		level = zerolog.DebugLevel
+	}
+	return zerolog.New(zerolog.ConsoleWriter{Out: os.Stdout}).
+		Level(level).
+		With().Timestamp().Logger()
+}
+{{else if eq .Logger "zap" -}}
+import "go.uber.org/zap"
+
+func New(env string) *zap.Logger {
+	if env == "production" {
+		l, _ := zap.NewProduction()
+		return l
+	}
+	l, _ := zap.NewDevelopment()
+	return l
+}
+{{else -}}
+import (
+	"log/slog"
+	"os"
+)
+
+func New(env string) *slog.Logger {
+	level := slog.LevelInfo
+	if env != "production" {
+		level = slog.LevelDebug
+	}
+	h := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})
+	return slog.New(h)
+}
+{{- end}}

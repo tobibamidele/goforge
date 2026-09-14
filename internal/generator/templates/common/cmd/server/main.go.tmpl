@@ -1,0 +1,69 @@
+package main
+
+import (
+	"log"
+	{{- if eq .EnvLoader "godotenv"}}
+	"github.com/joho/godotenv"
+	{{- end}}
+
+	"{{.Module}}/internal/config"
+	{{- if .HasDatabase}}
+	"{{.Module}}/internal/db"
+	{{- end}}
+	{{- if .UseRedis}}
+	"{{.Module}}/internal/cache"
+	{{- end}}
+	{{- if .UseAuth}}
+	"{{.Module}}/internal/auth"
+	{{- end}}
+	"{{.Module}}/internal/logger"
+	"{{.Module}}/internal/router"
+)
+
+func main() {
+	{{- if eq .EnvLoader "godotenv"}}
+	_ = godotenv.Load() // no-op if .env doesn't exist, e.g. in prod
+	{{- end}}
+
+	cfg := config.Load()
+	_ = logger.New(cfg.Env) // pass this into router.Deps too once handlers want structured logging
+
+	{{- if .HasDatabase}}
+
+	dbConn, err := db.Connect(cfg)
+	if err != nil {
+		log.Fatalf("connecting to {{.Database}}: %v", err)
+	}
+	defer db.Close(dbConn)
+	{{- end}}
+
+	{{- if .UseRedis}}
+
+	rdb := cache.Connect(cfg)
+	defer rdb.Close()
+	{{- end}}
+
+	{{- if .UseAuth}}
+
+	authSvc := auth.New(cfg{{if .HasDatabase}}, dbConn{{end}})
+	{{- end}}
+
+	h := router.New(router.Deps{
+		Config: cfg,
+		{{- if .HasDatabase}}
+		DB: dbConn,
+		{{- end}}
+		{{- if .UseRedis}}
+		Redis: rdb,
+		{{- end}}
+		{{- if .UseAuth}}
+		Auth: authSvc,
+		{{- end}}
+	})
+
+	addr := ":" + cfg.Port
+	log.Printf("{{.Name}} listening on %s (env=%s)", addr, cfg.Env)
+	if err := router.Run(h, addr); err != nil {
+		log.Fatal(err)
+	}
+}

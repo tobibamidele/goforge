@@ -1,0 +1,76 @@
+# {{.Name}}
+
+Scaffolded with **goforge**.
+
+- Framework: `{{.Framework}}`
+{{- if .HasDatabase}}
+- Database: `{{.Database}}` (via `{{.ORM}}`)
+{{- end}}
+{{- if .UseRedis}}
+- Redis: enabled
+{{- end}}
+{{- if .UseAuth}}
+- Auth: `{{.AuthType}}`{{if .UseOAuth}} + OAuth ({{range $i, $p := .OAuthProviders}}{{if $i}}, {{end}}{{$p}}{{end}}){{end}}
+{{- end}}
+
+## Getting started
+
+```bash
+cp .env.example .env
+go mod tidy
+{{- if .UseDocker}}
+docker compose up -d      # starts {{.Database}}{{if .UseRedis}} + redis{{end}}
+{{- end}}
+go run ./cmd/server
+```
+
+Health check: `GET /healthz`
+
+{{- if .UseAuth}}
+
+## Auth
+
+{{if eq .AuthType "jwt"}}
+JWT auth lives in `internal/auth`. Claims are built around an extensible
+`Claims` struct — add whatever custom fields (scopes, tenant id, roles...)
+you need in `internal/auth/claims.go` without touching the issuing/parsing
+logic.
+
+Routes: `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`.
+Protect a route with the `auth.RequireAuth` middleware and read the claims
+back out with `auth.ClaimsFromContext(ctx)`.
+{{else}}
+Session auth lives in `internal/auth`. Session data is a `map[string]any`
+under the hood (`internal/auth/session.go`) so you can stash arbitrary
+extra fields (roles, tenant id, whatever) with `sess.Set("key", value)`
+and read them back with `sess.Get("key")`.
+
+Routes: `POST /auth/register`, `POST /auth/login`, `POST /auth/logout`.
+Protect a route with the `auth.RequireAuth` middleware.
+{{end}}
+{{- if .UseOAuth}}
+OAuth ({{range $i, $p := .OAuthProviders}}{{if $i}}, {{end}}{{$p}}{{end}}) is wired through
+[markbates/goth](https://github.com/markbates/goth). Fill in the
+`*_CLIENT_ID` / `*_CLIENT_SECRET` env vars, then hit
+`GET /auth/{provider}` to kick off a flow and
+`GET /auth/{provider}/callback` to complete it — on success it issues the
+same {{.AuthType}} the rest of the app uses.
+{{- end}}
+{{- end}}
+
+## Project layout
+
+```
+cmd/server        entrypoint
+internal/config    env/config loading
+internal/router    {{.Framework}} wiring, one file per concern
+{{- if .HasDatabase}}
+internal/db        {{.Database}} connection ({{.ORM}})
+{{- end}}
+{{- if .UseRedis}}
+internal/cache     redis client
+{{- end}}
+{{- if .UseAuth}}
+internal/auth      {{.AuthType}} issuing/parsing + middleware{{if .UseOAuth}} + OAuth{{end}}
+{{- end}}
+```
