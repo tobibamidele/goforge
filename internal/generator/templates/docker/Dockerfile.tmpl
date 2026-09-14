@@ -1,0 +1,27 @@
+{{if .UseDocker -}}
+# syntax=docker/dockerfile:1
+
+FROM golang:{{.GoVersion}}-alpine AS build
+WORKDIR /src
+{{- if or (eq .ORM "bun") (eq .ORM "gorm") (eq .ORM "sqlx") (eq .ORM "database-sql")}}
+{{- if eq .Database "sqlite"}}
+RUN apk add --no-cache gcc musl-dev
+{{- end}}
+{{- end}}
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+{{- if eq .Database "sqlite"}}
+RUN CGO_ENABLED=1 go build -o /out/server ./cmd/server
+{{- else}}
+RUN CGO_ENABLED=0 go build -o /out/server ./cmd/server
+{{- end}}
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates
+WORKDIR /app
+COPY --from=build /out/server ./server
+COPY .env.example .env.example
+EXPOSE 8080
+ENTRYPOINT ["./server"]
+{{- end}}

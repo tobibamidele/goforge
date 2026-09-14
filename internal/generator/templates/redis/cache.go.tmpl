@@ -1,0 +1,30 @@
+{{if .UseRedis -}}
+// Package cache wraps the redis client behind a package-local type so
+// the rest of the app doesn't import go-redis directly.
+package cache
+
+import (
+	"context"
+
+	"github.com/redis/go-redis/v9"
+
+	"{{.Module}}/internal/config"
+)
+
+type Client = *redis.Client
+
+func Connect(cfg *config.Config) Client {
+	return redis.NewClient(&redis.Options{
+		Addr:     cfg.RedisAddr,
+		Password: cfg.RedisPassword,
+		DB:       cfg.RedisDB,
+	})
+}
+
+// Ping is a small helper for a startup smoke-test if you want one:
+//
+//	if err := cache.Ping(rdb); err != nil { log.Fatal(err) }
+func Ping(c Client) error {
+	return c.Ping(context.Background()).Err()
+}
+{{- end}}

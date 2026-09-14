@@ -1,0 +1,67 @@
+{{if .UseDocker -}}
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file: .env
+    {{- if or .HasDatabase .UseRedis}}
+    depends_on:
+      {{- if eq .Database "postgres"}}
+      - db
+      {{- end}}
+      {{- if eq .Database "mysql"}}
+      - db
+      {{- end}}
+      {{- if eq .Database "mongodb"}}
+      - db
+      {{- end}}
+      {{- if .UseRedis}}
+      - redis
+      {{- end}}
+    {{- end}}
+
+  {{- if eq .Database "postgres"}}
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: {{.Name}}
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+  {{- end}}
+  {{- if eq .Database "mysql"}}
+  db:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: {{.Name}}
+    ports:
+      - "3306:3306"
+    volumes:
+      - db-data:/var/lib/mysql
+  {{- end}}
+  {{- if eq .Database "mongodb"}}
+  db:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - db-data:/data/db
+  {{- end}}
+
+  {{- if .UseRedis}}
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+  {{- end}}
+
+{{- if or (eq .Database "postgres") (eq .Database "mysql") (eq .Database "mongodb")}}
+volumes:
+  db-data:
+{{- end}}
+{{- end}}
