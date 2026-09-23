@@ -39,6 +39,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Lathe scaffolds need its CLI + module deps to generate the db package
+	// and the initial migration. Best-effort: on failure the files on disk
+	// are still complete (schema + connect code) and we print the manual
+	// commands below.
+	if err := generator.RunLathe(outDir, p, os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, "warning: running lathe failed:", err)
+		fmt.Fprintln(os.Stderr, "  Once your network/toolchain is available, run in the project:")
+		fmt.Fprintln(os.Stderr, "    go mod tidy && go install github.com/tobibamidele/lathe/cmd/lathe@v0.1.0")
+		fmt.Fprintln(os.Stderr, "    lathe generate --schema internal/schema")
+		fmt.Fprintln(os.Stderr, "    lathe migrate diff init")
+	}
+
 	if p.GitInit {
 		cmd := exec.Command("git", "init")
 		cmd.Dir = outDir
@@ -55,6 +67,9 @@ func main() {
 	fmt.Println("  go mod tidy")
 	if p.UseDocker {
 		fmt.Println("  docker compose up -d")
+	}
+	if p.ORM == "lathe" && p.HasDatabase() {
+		fmt.Println(`  lathe migrate up --url "$DATABASE_URL"   # apply the starter migration`)
 	}
 	fmt.Println("  go run ./cmd/server")
 }

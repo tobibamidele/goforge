@@ -245,6 +245,12 @@ func goModRequires(p config.Project) []string {
 		add("github.com/go-sql-driver/mysql v1.8.1")
 	case "sqlite_database-sql":
 		add("github.com/mattn/go-sqlite3 v1.14.22")
+	case "postgres_lathe":
+		add("github.com/tobibamidele/lathe v0.1.0", "github.com/lib/pq v1.10.9")
+	case "mysql_lathe":
+		add("github.com/tobibamidele/lathe v0.1.0", "github.com/go-sql-driver/mysql v1.8.1")
+	case "sqlite_lathe":
+		add("github.com/tobibamidele/lathe v0.1.0", "modernc.org/sqlite v1.38.0")
 	case "mongodb":
 		add("go.mongodb.org/mongo-driver v1.16.1")
 	}

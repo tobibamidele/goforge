@@ -83,6 +83,7 @@ func Run() (config.Project, error) {
 				huh.NewSelect[string]().
 					Title(fmt.Sprintf("ORM / data-access layer for %s", p.Database)).
 					Options(
+						huh.NewOption("Lathe (Schema first ORM toolchain)", "lathe"),
 						huh.NewOption("Bun (lightweight SQL-first ORM)", "bun"),
 						huh.NewOption("GORM", "gorm"),
 						huh.NewOption("sqlx (raw SQL, typed scanning)", "sqlx"),

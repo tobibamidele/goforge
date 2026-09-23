@@ -10,9 +10,9 @@ import (
 func TestAllCombinations(t *testing.T) {
 	frameworks := []string{"gin", "fiber", "echo", "nethttp"}
 	dbs := map[string][]string{
-		"postgres": {"bun", "gorm", "sqlx", "database-sql"},
-		"mysql":    {"bun", "gorm", "sqlx", "database-sql"},
-		"sqlite":   {"bun", "gorm", "sqlx", "database-sql"},
+		"postgres": {"bun", "gorm", "sqlx", "database-sql", "lathe"},
+		"mysql":    {"bun", "gorm", "sqlx", "database-sql", "lathe"},
+		"sqlite":   {"bun", "gorm", "sqlx", "database-sql", "lathe"},
 		"mongodb":  {"mongo-driver"},
 		"none":     {"none"},
 	}

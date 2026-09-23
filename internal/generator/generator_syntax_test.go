@@ -16,9 +16,9 @@ import (
 func TestGeneratedGoSyntax(t *testing.T) {
 	frameworks := []string{"gin", "fiber", "echo", "nethttp"}
 	dbs := map[string][]string{
-		"postgres": {"bun", "gorm", "sqlx", "database-sql"},
-		"mysql":    {"bun"},
-		"sqlite":   {"sqlx"},
+		"postgres": {"bun", "gorm", "sqlx", "database-sql", "lathe"},
+		"mysql":    {"bun", "lathe"},
+		"sqlite":   {"sqlx", "lathe"},
 		"mongodb":  {"mongo-driver"},
 		"none":     {"none"},
 	}

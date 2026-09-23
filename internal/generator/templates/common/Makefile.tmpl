@@ -1,5 +1,5 @@
 {{if .UseMakefile -}}
-.PHONY: run build test tidy {{if .UseDocker}}docker-up docker-down{{end}}
+.PHONY: run build test tidy {{if .UseDocker}}docker-up docker-down{{end}}{{if eq .ORM "lathe"}} db migrate-up{{end}}
 
 run:
 	go run ./cmd/server
@@ -12,6 +12,15 @@ test:
 
 tidy:
 	go mod tidy
+{{- if eq .ORM "lathe"}}
+
+db: ## regenerate code + migrations from internal/schema/schema.go (usage: make db name=add_bio)
+	lathe generate --schema internal/schema
+	lathe migrate diff $(name)
+
+migrate-up:
+	lathe migrate up --url "$$DATABASE_URL"
+{{- end}}
 {{- if .UseDocker}}
 
 docker-up:

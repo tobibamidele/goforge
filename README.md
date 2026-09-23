@@ -16,7 +16,7 @@ It'll walk you through:
 1. Project name + module path
 2. HTTP framework — Gin, Fiber, Echo, or stdlib `net/http` (Go 1.22 `ServeMux`)
 3. Database — Postgres, MySQL, SQLite, MongoDB, or none
-4. ORM (if applicable) — Bun, GORM, sqlx, or raw `database/sql`
+4. ORM (if applicable) — Lathe, Bun, GORM, sqlx, or raw `database/sql`
 5. Redis — yes/no
 6. Dockerfile + docker-compose — yes/no
 7. Auth — yes/no; if yes: **JWT** or **server-side sessions**, plus optional
@@ -67,7 +67,7 @@ internal/generator          embeds templates/, renders + writes the project
 internal/generator/templates/
   common/                   go.mod, main.go, config, logger, README, CI, Makefile
   router/{gin,fiber,echo,nethttp}.go.tmpl
-  db/{postgres,mysql,sqlite}_{bun,gorm,sqlx,database-sql}.go.tmpl, mongodb.go.tmpl
+  db/{postgres,mysql,sqlite}_{bun,gorm,sqlx,database-sql,lathe}.go.tmpl, mongodb.go.tmpl
   redis/cache.go.tmpl
   auth/jwt/                 core + per-framework routes/middleware
   auth/session/             core + stores (memory/redis) + per-framework routes/middleware
@@ -81,7 +81,14 @@ so adding a ninth framework or a fifth database is additive, not a rewrite.
 
 ## Tests
 
-`go test ./internal/generator/...` renders all ~560 framework × db × orm ×
+`go test ./internal/generator/...` renders all ~700 framework × db × orm ×
 redis × auth × oauth combinations and gofmt-checks every generated `.go`
 file, so a broken template combination fails CI instead of showing up as a
 broken `git clone` for whoever runs the CLI.
+
+For the Lathe ORM, the wizard also runs the toolchain end to end after
+scaffolding — installing the `lathe` CLI if missing, then `go mod tidy`,
+`lathe generate --schema internal/schema` and `lathe migrate diff init` — so a
+scaffolded project ships with its generated `internal/db` package and initial
+migration already in place (best-effort: on failure, the commands are printed
+and the schema is left in `internal/schema/schema.go` to regenerate from).

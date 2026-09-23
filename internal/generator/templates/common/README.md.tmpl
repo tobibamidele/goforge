@@ -26,6 +26,30 @@ go run ./cmd/server
 
 Health check: `GET /healthz`
 
+{{- if eq .ORM "lathe"}}
+
+## Database schema (lathe)
+
+The schema is Go code, not magic: edit `internal/schema/schema.go`, then
+regenerate everything with one command:
+
+```bash
+make db name=my_change     # or: lathe generate --schema internal/schema
+                           #     lathe migrate diff my_change
+make migrate-up            # apply pending migrations ($DATABASE_URL)
+```
+
+- `lathe generate` regenerates `internal/db` (the `Client`, one model +
+  typed-columns/table variables per table).
+- `lathe migrate diff NAME` diffs the schema against `migrations/snapshot.json`
+  and writes `migrations/<ts>_NAME.up.sql` + `.down.sql`.
+- `lathe migrate up` applies pending migrations; the starter schema ships with
+  an `init` migration ready to apply.
+
+The compiled `User` model lives in `internal/db`, generated from the `users`
+table. `internal/db` is generated code — edit the schema, never the generated
+files.
+{{- end}}
 {{- if .UseAuth}}
 
 ## Auth
@@ -66,6 +90,10 @@ internal/config    env/config loading
 internal/router    {{.Framework}} wiring, one file per concern
 {{- if .HasDatabase}}
 internal/db        {{.Database}} connection ({{.ORM}})
+{{- end}}
+{{- if eq .ORM "lathe"}}
+internal/schema    the lathe schema (edit this, regenerate internal/db)
+migrations         lathe SQL migrations + snapshot.json
 {{- end}}
 {{- if .UseRedis}}
 internal/cache     redis client

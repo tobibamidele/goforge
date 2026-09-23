@@ -1,0 +1,21 @@
+package db
+
+import (
+	_ "github.com/lib/pq"
+
+	"github.com/tobibamidele/lathe"
+	"github.com/tobibamidele/lathe/postgres"
+
+	"{{.Module}}/internal/config"
+)
+
+// DB is lathe's PostgreSQL handle. The generated package adds the Client,
+// models and typed columns (see internal/schema); handlers build a client on
+// top of this with db.NewClient(d.DB).
+type DB = lathe.DB
+
+func Connect(cfg *config.Config) (*DB, error) {
+	return postgres.Open(cfg.DatabaseURL)
+}
+
+func Close(d *DB) { _ = d.Close() }

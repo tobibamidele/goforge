@@ -1,0 +1,27 @@
+{{if eq .ORM "lathe" -}}
+// Package schema declares the database schema. lathe reads it to generate
+// code ("lathe generate") and migrations ("lathe migrate diff").
+package schema
+
+import s "github.com/tobibamidele/lathe/schema"
+
+// Schema is the entry point lathe looks for. Edit the tables here, then
+// regenerate with `make db` (lathe generate / lathe migrate diff).
+var Schema = s.New(s.Config{
+	Dialect:    s.{{if eq .Database "postgres"}}Postgres{{else if eq .Database "mysql"}}MySQL{{else}}SQLite{{end}},
+	Output:     "internal/db", // the generated Go package (Client, models, typed columns)
+	Migrations: "migrations",  // SQL migrations and the schema snapshot live here
+	{{- if eq .Database "postgres"}}
+	Driver:     "github.com/lib/pq",
+	{{- end}}
+},
+	s.Table("users",
+		s.BigInt("id").PrimaryKey().AutoIncrement(),
+		s.VarChar("email", 255).Unique(),
+		s.VarChar("name", 120),
+		s.Text("password_hash"),
+		s.Enum("role", "admin", "user").Default("user"),
+		s.Timestamp("created_at").DefaultNow(),
+	),
+)
+{{- end}}

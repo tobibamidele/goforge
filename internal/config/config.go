@@ -10,7 +10,7 @@ type Project struct {
 	Framework string // gin | fiber | echo | nethttp
 
 	Database string // postgres | mysql | sqlite | mongodb | none
-	ORM      string // bun | gorm | sqlx | database-sql | mongo-driver | none
+	ORM      string // bun | gorm | sqlx | database-sql | mongo-driver | lathe | none
 
 	UseRedis bool
 
